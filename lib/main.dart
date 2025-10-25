@@ -40,7 +40,7 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
   void initState() {
     super.initState();
 
-    // Initial animations
+    
     Timer(const Duration(milliseconds: 300), () {
       setState(() {
         _opacity = 1.0;
@@ -48,19 +48,19 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
       });
     });
 
-    // Icon bounce animation
+    
     _iconController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
 
-    // Shake animation for errors
+    
     _shakeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
     );
 
-    // Gradient animation controller
+    
     _gradientController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 10),
@@ -101,14 +101,14 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
 
   void _login() async {
     if (_nameController.text.isEmpty || _selectedDate == null) {
-      // Shake animation for validation error
+      
       _shakeController.forward(from: 0);
       return;
     }
 
     setState(() => _isLoading = true);
 
-    // Simulate API call delay
+    
     await Future.delayed(const Duration(milliseconds: 1500));
 
     if (mounted) {
@@ -237,13 +237,13 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
             },
           ),
 
-          // Stars
+          
           ..._buildStars(),
 
-          // Floating Planets
+        
           ..._buildFloatingPlanets(),
 
-          // Main Content
+          
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
@@ -294,7 +294,7 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
 
                                 const SizedBox(height: 20),
 
-                                // Title with gradient
+                                
                                 ShaderMask(
                                   shaderCallback: (bounds) => const LinearGradient(
                                     colors: [Colors.deepPurple, Colors.pinkAccent],
@@ -322,7 +322,7 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
 
                                 const SizedBox(height: 30),
 
-                                // Name Input
+                              
                                 TextField(
                                   controller: _nameController,
                                   decoration: InputDecoration(
@@ -339,7 +339,7 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
 
                                 const SizedBox(height: 20),
 
-                                // Date Picker Button
+                                
                                 AnimatedContainer(
                                   duration: const Duration(milliseconds: 300),
                                   decoration: BoxDecoration(
@@ -382,7 +382,7 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
 
                                 const SizedBox(height: 30),
 
-                                // Login Button
+                                
                                 SizedBox(
                                   width: double.infinity,
                                   height: 55,
@@ -702,7 +702,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
 
                                 const SizedBox(height: 20),
 
-                                // Welcome Message
+                                
                                 Text(
                                   "Welcome, ${widget.name}!",
                                   style: const TextStyle(
@@ -725,7 +725,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
 
                                 const SizedBox(height: 30),
 
-                                // Zodiac Sign
+                                
                                 Container(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 20,
@@ -771,12 +771,12 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
 
                                 const SizedBox(height: 30),
 
-                                // Zodiac Information
+                                
                                 ..._buildZodiacInfoCards(zodiacInfo),
 
                                 const SizedBox(height: 30),
 
-                                // Action Buttons
+                               
                                 Row(
                                   children: [
                                     Expanded(
@@ -796,7 +796,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
                                     Expanded(
                                       child: ElevatedButton.icon(
                                         onPressed: () {
-                                          // Share functionality would go here
+                                          
                                         },
                                         icon: const Icon(Icons.share),
                                         label: const Text("Share"),
