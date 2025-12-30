@@ -1,8 +1,16 @@
+
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'dart:io' show Platform;
+import 'dart:typed_data';
+import 'package:flutter/services.dart';
 
-void main() => runApp(ZodicApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(ZodicApp());
+}
 
 class ZodicApp extends StatelessWidget {
   @override
@@ -14,12 +22,1299 @@ class ZodicApp extends StatelessWidget {
         primarySwatch: Colors.deepPurple,
         fontFamily: 'Poppins',
       ),
-      home: AnimatedLoginPage(),
+      home: AuthWrapper(),
     );
   }
 }
 
+class AuthWrapper extends StatefulWidget {
+  @override
+  _AuthWrapperState createState() => _AuthWrapperState();
+}
+
+class _AuthWrapperState extends State<AuthWrapper> {
+  bool _isLoading = true;
+  UserData? _userData;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAuthState();
+  }
+
+  Future<void> _checkAuthState() async {
+    // Simple in-memory storage for demo
+    await Future.delayed(Duration(milliseconds: 500));
+
+    // Check if user data exists in memory
+    if (AuthService().currentUser != null) {
+      if (mounted) {
+        setState(() {
+          _userData = AuthService().currentUser;
+          _isLoading = false;
+        });
+      }
+    } else {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(Colors.deepPurple),
+          ),
+        ),
+      );
+    }
+
+    return _userData == null ? WelcomeScreen() : AnimatedLoginPage(userData: _userData!);
+  }
+}
+
+class UserData {
+  final String name;
+  final String email;
+  final DateTime birthDate;
+  final DateTime createdAt;
+
+  UserData({
+    required this.name,
+    required this.email,
+    required this.birthDate,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'email': email,
+    'birthDate': birthDate.toIso8601String(),
+    'createdAt': createdAt.toIso8601String(),
+  };
+
+  factory UserData.fromJson(Map<String, dynamic> json) => UserData(
+    name: json['name'],
+    email: json['email'],
+    birthDate: DateTime.parse(json['birthDate']),
+    createdAt: DateTime.parse(json['createdAt']),
+  );
+}
+
+class AuthService {
+  static final AuthService _instance = AuthService._internal();
+  factory AuthService() => _instance;
+  AuthService._internal();
+
+  // Simple in-memory storage for demo
+  List<Map<String, dynamic>> _users = [];
+  UserData? _currentUser;
+
+  UserData? get currentUser => _currentUser;
+
+  // Simple hash function for demo
+  String _simpleHash(String input) {
+    int hash = 0;
+    for (int i = 0; i < input.length; i++) {
+      hash = ((hash << 5) - hash) + input.codeUnitAt(i);
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash.abs().toString();
+  }
+
+  // Simple email validation
+  bool _isValidEmail(String email) {
+    return RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(email);
+  }
+
+  // Register new user
+  Future<bool> register({
+    required String name,
+    required String email,
+    required String password,
+    required DateTime birthDate,
+  }) async {
+    // Validate email
+    if (!_isValidEmail(email)) {
+      throw Exception('Please enter a valid email address');
+    }
+
+    // Check if email already exists
+    for (final user in _users) {
+      if (user['email'] == email) {
+        throw Exception('Email already registered');
+      }
+    }
+
+    // Create user data
+    final userData = UserData(
+      name: name,
+      email: email,
+      birthDate: birthDate,
+      createdAt: DateTime.now(),
+    );
+
+    // Save user
+    _users.add({
+      'email': email,
+      'password': _simpleHash(password),
+      'data': userData.toJson(),
+    });
+
+    // Set as current user
+    _currentUser = userData;
+
+    return true;
+  }
+
+  // Login user
+  Future<UserData> login({
+    required String email,
+    required String password,
+  }) async {
+    // Validate email
+    if (!_isValidEmail(email)) {
+      throw Exception('Please enter a valid email address');
+    }
+
+    // Find user
+    Map<String, dynamic>? user;
+    for (final u in _users) {
+      if (u['email'] == email) {
+        user = u;
+        break;
+      }
+    }
+
+    if (user == null) {
+      throw Exception('User not found');
+    }
+
+    // Check password
+    if (user['password'] != _simpleHash(password)) {
+      throw Exception('Invalid password');
+    }
+
+    final userData = UserData.fromJson(user['data']);
+
+    // Set as current user
+    _currentUser = userData;
+
+    return userData;
+  }
+
+  // Logout
+  Future<void> logout() async {
+    _currentUser = null;
+  }
+
+  // Check if user is logged in
+  bool isLoggedIn() {
+    return _currentUser != null;
+  }
+
+  // Update user profile
+  Future<void> updateProfile({
+    required String name,
+    required DateTime birthDate,
+  }) async {
+    if (_currentUser == null) return;
+
+    final updatedUser = UserData(
+      name: name,
+      email: _currentUser!.email,
+      birthDate: birthDate,
+      createdAt: _currentUser!.createdAt,
+    );
+
+    // Update in storage
+    for (int i = 0; i < _users.length; i++) {
+      if (_users[i]['email'] == _currentUser!.email) {
+        _users[i]['data'] = updatedUser.toJson();
+        break;
+      }
+    }
+
+    // Update current user
+    _currentUser = updatedUser;
+  }
+}
+
+class WelcomeScreen extends StatefulWidget {
+  @override
+  _WelcomeScreenState createState() => _WelcomeScreenState();
+}
+
+class _WelcomeScreenState extends State<WelcomeScreen>
+    with TickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _fadeAnimation;
+  late Animation<double> _scaleAnimation;
+  late AnimationController _gradientController;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 1500),
+    );
+
+    _gradientController = AnimationController(
+      vsync: this,
+      duration: Duration(seconds: 10),
+    )..repeat(reverse: true);
+
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeIn),
+    );
+
+    _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.elasticOut),
+    );
+
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _gradientController.dispose();
+    super.dispose();
+  }
+
+  List<Widget> _buildStars(BuildContext context) {
+    final Random random = Random();
+    return List.generate(60, (index) {
+      final double top = random.nextDouble() * MediaQuery.of(context).size.height;
+      final double left = random.nextDouble() * MediaQuery.of(context).size.width;
+      final double size = random.nextDouble() * 3 + 1;
+      final double opacity = random.nextDouble() * 0.6 + 0.2;
+
+      return Positioned(
+        top: top,
+        left: left,
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(opacity),
+            shape: BoxShape.circle,
+          ),
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          // Animated Gradient Background
+          AnimatedBuilder(
+            animation: _gradientController,
+            builder: (context, child) {
+              return Container(
+                decoration: BoxDecoration(
+                  gradient: SweepGradient(
+                    center: Alignment.center,
+                    colors: [
+                      Colors.deepPurple.shade900,
+                      Colors.purple.shade800,
+                      Colors.pink.shade600,
+                      Colors.deepPurple.shade900,
+                    ],
+                    stops: const [0.0, 0.3, 0.7, 1.0],
+                    transform: GradientRotation(_gradientController.value * 2 * pi),
+                  ),
+                ),
+              );
+            },
+          ),
+
+          // Stars
+          ..._buildStars(context),
+
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Spacer(flex: 2),
+
+                  // Logo and Title
+                  ScaleTransition(
+                    scale: _scaleAnimation,
+                    child: FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.auto_awesome,
+                            size: 100,
+                            color: Colors.white,
+                          ),
+                          SizedBox(height: 20),
+                          ShaderMask(
+                            shaderCallback: (bounds) => LinearGradient(
+                              colors: [Colors.white, Colors.amber.shade200],
+                            ).createShader(bounds),
+                            child: Text(
+                              "ZODIC",
+                              style: TextStyle(
+                                fontSize: 48,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 2,
+                              ),
+                            ),
+                          ),
+                          SizedBox(height: 10),
+                          Text(
+                            "Discover Your Cosmic Journey",
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: Colors.white70,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  Spacer(flex: 3),
+
+                  // Auth Buttons
+                  FadeTransition(
+                    opacity: _fadeAnimation,
+                    child: Column(
+                      children: [
+                        // Sign In Button
+                        SizedBox(
+                          width: double.infinity,
+                          height: 56,
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => LoginPage(),
+                                ),
+                              );
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              foregroundColor: Colors.deepPurple,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(15),
+                              ),
+                              elevation: 5,
+                            ),
+                            child: Text(
+                              "Sign In",
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        SizedBox(height: 16),
+
+                        // Sign Up Button
+                        SizedBox(
+                          width: double.infinity,
+                          height: 56,
+                          child: OutlinedButton(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => RegisterPage(),
+                                ),
+                              );
+                            },
+                            style: OutlinedButton.styleFrom(
+                              side: BorderSide(color: Colors.white, width: 2),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(15),
+                              ),
+                              foregroundColor: Colors.white,
+                            ),
+                            child: Text(
+                              "Create Account",
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        SizedBox(height: 24),
+
+                        // Guest Button
+                        TextButton(
+                          onPressed: () async {
+                            await Navigator.pushReplacement(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => AnimatedLoginPage(userData: null),
+                              ),
+                            );
+                          },
+                          child: Text(
+                            "Continue as Guest",
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  Spacer(),
+
+                  // Footer
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 20),
+                    child: Text(
+                      "By continuing, you agree to our Terms & Privacy Policy",
+                      style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class LoginPage extends StatefulWidget {
+  @override
+  _LoginPageState createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  bool _isLoading = false;
+  bool _obscurePassword = true;
+  late AnimationController _controller;
+  late Animation<double> _fadeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 1000),
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeIn),
+    );
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  // Simple email validation
+  bool _validateEmail(String email) {
+    return RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(email);
+  }
+
+  Future<void> _login() async {
+    if (_formKey.currentState!.validate()) {
+      setState(() => _isLoading = true);
+
+      try {
+        final userData = await AuthService().login(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+        );
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Welcome back, ${userData.name}!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => AnimatedLoginPage(userData: userData),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(e.toString()),
+              backgroundColor: Colors.red,
+            ),
+          );
+          setState(() => _isLoading = false);
+        }
+      }
+    }
+  }
+
+  List<Widget> _buildStars(BuildContext context) {
+    final Random random = Random();
+    return List.generate(40, (index) {
+      final double top = random.nextDouble() * MediaQuery.of(context).size.height;
+      final double left = random.nextDouble() * MediaQuery.of(context).size.width;
+      final double size = random.nextDouble() * 3 + 1;
+      final double opacity = random.nextDouble() * 0.6 + 0.2;
+
+      return Positioned(
+        top: top,
+        left: left,
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(opacity),
+            shape: BoxShape.circle,
+          ),
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          // Background
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.deepPurple.shade800,
+                  Colors.purple.shade600,
+                  Colors.pink.shade400,
+                ],
+              ),
+            ),
+          ),
+
+          // Stars
+          ..._buildStars(context),
+
+          SafeArea(
+            child: FadeTransition(
+              opacity: _fadeAnimation,
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      // Back Button
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: Icon(Icons.arrow_back, color: Colors.white),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+
+                      SizedBox(height: 40),
+
+                      // Title
+                      Text(
+                        "Welcome Back",
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        "Sign in to continue your cosmic journey",
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.white70,
+                        ),
+                      ),
+
+                      SizedBox(height: 40),
+
+                      // Login Form
+                      Card(
+                        elevation: 10,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Form(
+                            key: _formKey,
+                            child: Column(
+                              children: [
+                                // Email Field
+                                TextFormField(
+                                  controller: _emailController,
+                                  decoration: InputDecoration(
+                                    labelText: "Email",
+                                    prefixIcon: Icon(Icons.email, color: Colors.deepPurple),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  keyboardType: TextInputType.emailAddress,
+                                  validator: (value) {
+                                    if (value == null || value.isEmpty) {
+                                      return 'Please enter your email';
+                                    }
+                                    if (!_validateEmail(value)) {
+                                      return 'Please enter a valid email';
+                                    }
+                                    return null;
+                                  },
+                                ),
+
+                                SizedBox(height: 20),
+
+                                // Password Field
+                                TextFormField(
+                                  controller: _passwordController,
+                                  decoration: InputDecoration(
+                                    labelText: "Password",
+                                    prefixIcon: Icon(Icons.lock, color: Colors.deepPurple),
+                                    suffixIcon: IconButton(
+                                      icon: Icon(
+                                        _obscurePassword
+                                            ? Icons.visibility_off
+                                            : Icons.visibility,
+                                        color: Colors.grey,
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _obscurePassword = !_obscurePassword;
+                                        });
+                                      },
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  obscureText: _obscurePassword,
+                                  validator: (value) {
+                                    if (value == null || value.isEmpty) {
+                                      return 'Please enter your password';
+                                    }
+                                    if (value.length < 6) {
+                                      return 'Password must be at least 6 characters';
+                                    }
+                                    return null;
+                                  },
+                                ),
+
+                                SizedBox(height: 24),
+
+                                // Login Button
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 50,
+                                  child: _isLoading
+                                      ? Center(
+                                    child: CircularProgressIndicator(
+                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.deepPurple),
+                                    ),
+                                  )
+                                      : ElevatedButton(
+                                    onPressed: _login,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.deepPurple,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      elevation: 5,
+                                    ),
+                                    child: Text(
+                                      "Sign In",
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+
+                                SizedBox(height: 16),
+
+                                // Forgot Password
+                                TextButton(
+                                  onPressed: () {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Password reset feature coming soon!'),
+                                        backgroundColor: Colors.blue,
+                                      ),
+                                    );
+                                  },
+                                  child: Text(
+                                    "Forgot Password?",
+                                    style: TextStyle(
+                                      color: Colors.deepPurple,
+                                    ),
+                                  ),
+                                ),
+
+                                SizedBox(height: 8),
+
+                                // Sign Up Link
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      "Don't have an account? ",
+                                      style: TextStyle(color: Colors.grey),
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        Navigator.pushReplacement(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) => RegisterPage(),
+                                          ),
+                                        );
+                                      },
+                                      child: Text(
+                                        "Sign Up",
+                                        style: TextStyle(
+                                          color: Colors.deepPurple,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class RegisterPage extends StatefulWidget {
+  @override
+  _RegisterPageState createState() => _RegisterPageState();
+}
+
+class _RegisterPageState extends State<RegisterPage> with TickerProviderStateMixin {
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  DateTime? _selectedDate;
+  bool _isLoading = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
+  late AnimationController _controller;
+  late Animation<double> _fadeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 1000),
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeIn),
+    );
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  // Simple email validation
+  bool _validateEmail(String email) {
+    return RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(email);
+  }
+
+  Future<void> _pickDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now().subtract(Duration(days: 365 * 20)),
+      firstDate: DateTime(1900),
+      lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: ThemeData.light().copyWith(
+            colorScheme: ColorScheme.light(
+              primary: Colors.deepPurple,
+              onPrimary: Colors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null && mounted) {
+      setState(() => _selectedDate = picked);
+    }
+  }
+
+  Future<void> _register() async {
+    if (_formKey.currentState!.validate()) {
+      if (_selectedDate == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Please select your birth date'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      setState(() => _isLoading = true);
+
+      try {
+        final success = await AuthService().register(
+          name: _nameController.text.trim(),
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+          birthDate: _selectedDate!,
+        );
+
+        if (success && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Account created successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => AnimatedLoginPage(
+                userData: UserData(
+                  name: _nameController.text.trim(),
+                  email: _emailController.text.trim(),
+                  birthDate: _selectedDate!,
+                  createdAt: DateTime.now(),
+                ),
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(e.toString()),
+              backgroundColor: Colors.red,
+            ),
+          );
+          setState(() => _isLoading = false);
+        }
+      }
+    }
+  }
+
+  List<Widget> _buildStars(BuildContext context) {
+    final Random random = Random();
+    return List.generate(40, (index) {
+      final double top = random.nextDouble() * MediaQuery.of(context).size.height;
+      final double left = random.nextDouble() * MediaQuery.of(context).size.width;
+      final double size = random.nextDouble() * 3 + 1;
+      final double opacity = random.nextDouble() * 0.6 + 0.2;
+
+      return Positioned(
+        top: top,
+        left: left,
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(opacity),
+            shape: BoxShape.circle,
+          ),
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          // Background
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.deepPurple.shade800,
+                  Colors.purple.shade600,
+                  Colors.pink.shade400,
+                ],
+              ),
+            ),
+          ),
+
+          // Stars
+          ..._buildStars(context),
+
+          SafeArea(
+            child: FadeTransition(
+              opacity: _fadeAnimation,
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      // Back Button
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: Icon(Icons.arrow_back, color: Colors.white),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+
+                      SizedBox(height: 20),
+
+                      // Title
+                      Text(
+                        "Create Account",
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        "Start your cosmic journey today",
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.white70,
+                        ),
+                      ),
+
+                      SizedBox(height: 30),
+
+                      // Registration Form
+                      Card(
+                        elevation: 10,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Form(
+                            key: _formKey,
+                            child: Column(
+                              children: [
+                                // Name Field
+                                TextFormField(
+                                  controller: _nameController,
+                                  decoration: InputDecoration(
+                                    labelText: "Full Name",
+                                    prefixIcon: Icon(Icons.person, color: Colors.deepPurple),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  validator: (value) {
+                                    if (value == null || value.isEmpty) {
+                                      return 'Please enter your name';
+                                    }
+                                    if (value.length < 2) {
+                                      return 'Name must be at least 2 characters';
+                                    }
+                                    return null;
+                                  },
+                                ),
+
+                                SizedBox(height: 20),
+
+                                // Email Field
+                                TextFormField(
+                                  controller: _emailController,
+                                  decoration: InputDecoration(
+                                    labelText: "Email",
+                                    prefixIcon: Icon(Icons.email, color: Colors.deepPurple),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  keyboardType: TextInputType.emailAddress,
+                                  validator: (value) {
+                                    if (value == null || value.isEmpty) {
+                                      return 'Please enter your email';
+                                    }
+                                    if (!_validateEmail(value)) {
+                                      return 'Please enter a valid email';
+                                    }
+                                    return null;
+                                  },
+                                ),
+
+                                SizedBox(height: 20),
+
+                                // Birth Date Field
+                                GestureDetector(
+                                  onTap: _pickDate,
+                                  child: AbsorbPointer(
+                                    child: TextFormField(
+                                      decoration: InputDecoration(
+                                        labelText: "Birth Date",
+                                        prefixIcon: Icon(Icons.calendar_today, color: Colors.deepPurple),
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        suffixIcon: Icon(Icons.arrow_drop_down),
+                                      ),
+                                      controller: TextEditingController(
+                                        text: _selectedDate == null
+                                            ? "Select your birth date"
+                                            : "${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}",
+                                      ),
+                                      validator: (value) {
+                                        if (_selectedDate == null) {
+                                          return 'Please select your birth date';
+                                        }
+                                        return null;
+                                      },
+                                    ),
+                                  ),
+                                ),
+
+                                SizedBox(height: 20),
+
+                                // Password Field
+                                TextFormField(
+                                  controller: _passwordController,
+                                  decoration: InputDecoration(
+                                    labelText: "Password",
+                                    prefixIcon: Icon(Icons.lock, color: Colors.deepPurple),
+                                    suffixIcon: IconButton(
+                                      icon: Icon(
+                                        _obscurePassword
+                                            ? Icons.visibility_off
+                                            : Icons.visibility,
+                                        color: Colors.grey,
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _obscurePassword = !_obscurePassword;
+                                        });
+                                      },
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  obscureText: _obscurePassword,
+                                  validator: (value) {
+                                    if (value == null || value.isEmpty) {
+                                      return 'Please enter a password';
+                                    }
+                                    if (value.length < 6) {
+                                      return 'Password must be at least 6 characters';
+                                    }
+                                    return null;
+                                  },
+                                ),
+
+                                SizedBox(height: 20),
+
+                                // Confirm Password Field
+                                TextFormField(
+                                  controller: _confirmPasswordController,
+                                  decoration: InputDecoration(
+                                    labelText: "Confirm Password",
+                                    prefixIcon: Icon(Icons.lock_outline, color: Colors.deepPurple),
+                                    suffixIcon: IconButton(
+                                      icon: Icon(
+                                        _obscureConfirmPassword
+                                            ? Icons.visibility_off
+                                            : Icons.visibility,
+                                        color: Colors.grey,
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _obscureConfirmPassword = !_obscureConfirmPassword;
+                                        });
+                                      },
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  obscureText: _obscureConfirmPassword,
+                                  validator: (value) {
+                                    if (value == null || value.isEmpty) {
+                                      return 'Please confirm your password';
+                                    }
+                                    if (value != _passwordController.text) {
+                                      return 'Passwords do not match';
+                                    }
+                                    return null;
+                                  },
+                                ),
+
+                                SizedBox(height: 30),
+
+                                // Register Button
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 50,
+                                  child: _isLoading
+                                      ? Center(
+                                    child: CircularProgressIndicator(
+                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.deepPurple),
+                                    ),
+                                  )
+                                      : ElevatedButton(
+                                    onPressed: _register,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.deepPurple,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      elevation: 5,
+                                    ),
+                                    child: Text(
+                                      "Create Account",
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+
+                                SizedBox(height: 16),
+
+                                // Terms and Conditions
+                                Text(
+                                  "By creating an account, you agree to our Terms of Service and Privacy Policy",
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+
+                                SizedBox(height: 8),
+
+                                // Sign In Link
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      "Already have an account? ",
+                                      style: TextStyle(color: Colors.grey),
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        Navigator.pushReplacement(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) => LoginPage(),
+                                          ),
+                                        );
+                                      },
+                                      child: Text(
+                                        "Sign In",
+                                        style: TextStyle(
+                                          color: Colors.deepPurple,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// Update AnimatedLoginPage constructor to accept userData
 class AnimatedLoginPage extends StatefulWidget {
+  final UserData? userData;
+
+  const AnimatedLoginPage({Key? key, required this.userData}) : super(key: key);
+
   @override
   _AnimatedLoginPageState createState() => _AnimatedLoginPageState();
 }
@@ -39,6 +1334,12 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
   @override
   void initState() {
     super.initState();
+
+    // If user is logged in, pre-fill data
+    if (widget.userData != null) {
+      _nameController.text = widget.userData!.name;
+      _selectedDate = widget.userData!.birthDate;
+    }
 
     Timer(const Duration(milliseconds: 300), () {
       setState(() {
@@ -68,13 +1369,14 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
     _iconController.dispose();
     _shakeController.dispose();
     _gradientController.dispose();
+    _nameController.dispose();
     super.dispose();
   }
 
   void _pickDate() async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: DateTime.now().subtract(const Duration(days: 365 * 20)),
+      initialDate: _selectedDate ?? DateTime.now().subtract(const Duration(days: 365 * 20)),
       firstDate: DateTime(1900),
       lastDate: DateTime.now(),
       builder: (context, child) {
@@ -92,6 +1394,14 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
 
     if (picked != null && mounted) {
       setState(() => _selectedDate = picked);
+
+      // Update user data if logged in
+      if (widget.userData != null) {
+        await AuthService().updateProfile(
+          name: _nameController.text,
+          birthDate: picked,
+        );
+      }
     }
   }
 
@@ -113,10 +1423,22 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
           builder: (context) => AnimatedHomePage(
             name: _nameController.text,
             birthDate: _selectedDate!,
+            userData: widget.userData,
           ),
         ),
       );
     }
+  }
+
+  // Add logout function
+  Future<void> _logout() async {
+    await AuthService().logout();
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => WelcomeScreen(),
+      ),
+    );
   }
 
   List<Widget> _buildStars() {
@@ -197,7 +1519,7 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
     return Scaffold(
       body: Stack(
         children: [
-
+          // Animated Gradient
           AnimatedBuilder(
             animation: _gradientController,
             builder: (context, child) {
@@ -219,12 +1541,11 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
             },
           ),
 
-
+          // Stars
           ..._buildStars(),
 
-
+          // Planets
           ..._buildFloatingPlanets(),
-
 
           SafeArea(
             child: Center(
@@ -259,7 +1580,76 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                // User info if logged in
+                                if (widget.userData != null) ...[
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            "Welcome back,",
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                          Text(
+                                            widget.userData!.name,
+                                            style: TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.deepPurple,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      PopupMenuButton<String>(
+                                        icon: Icon(Icons.more_vert, color: Colors.deepPurple),
+                                        onSelected: (value) {
+                                          if (value == 'logout') {
+                                            _logout();
+                                          } else if (value == 'profile') {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(
+                                                content: Text('Profile page coming soon!'),
+                                                backgroundColor: Colors.blue,
+                                              ),
+                                            );
+                                          }
+                                        },
+                                        itemBuilder: (context) => [
+                                          PopupMenuItem(
+                                            value: 'profile',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.person, size: 20),
+                                                SizedBox(width: 8),
+                                                Text('Profile'),
+                                              ],
+                                            ),
+                                          ),
+                                          PopupMenuItem(
+                                            value: 'logout',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.logout, size: 20),
+                                                SizedBox(width: 8),
+                                                Text('Logout'),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                  SizedBox(height: 20),
+                                  Divider(),
+                                  SizedBox(height: 20),
+                                ],
 
+                                // Icon Animation
                                 ScaleTransition(
                                   scale: Tween(begin: 1.0, end: 1.1).animate(
                                     CurvedAnimation(
@@ -276,7 +1666,7 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
 
                                 const SizedBox(height: 20),
 
-
+                                // App Title
                                 ShaderMask(
                                   shaderCallback: (bounds) => const LinearGradient(
                                     colors: [Colors.deepPurple, Colors.pinkAccent],
@@ -304,11 +1694,13 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
 
                                 const SizedBox(height: 30),
 
-
+                                // Name Input
                                 TextField(
                                   controller: _nameController,
                                   decoration: InputDecoration(
-                                    labelText: "Enter your name",
+                                    labelText: widget.userData != null
+                                        ? "Update your name"
+                                        : "Enter your name",
                                     prefixIcon: const Icon(Icons.person, color: Colors.deepPurple),
                                     border: OutlineInputBorder(
                                       borderRadius: BorderRadius.circular(15),
@@ -321,6 +1713,7 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
 
                                 const SizedBox(height: 20),
 
+                                // Birth Date Selection
                                 AnimatedContainer(
                                   duration: const Duration(milliseconds: 300),
                                   decoration: BoxDecoration(
@@ -339,7 +1732,9 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
                                     ),
                                     title: Text(
                                       _selectedDate == null
-                                          ? "Select Birth Date"
+                                          ? widget.userData != null
+                                          ? "Update Birth Date"
+                                          : "Select Birth Date"
                                           : "Birth Date Selected ✓",
                                       style: TextStyle(
                                         color: _selectedDate == null
@@ -363,7 +1758,7 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
 
                                 const SizedBox(height: 30),
 
-                                // Login Button
+                                // Continue Button
                                 SizedBox(
                                   width: double.infinity,
                                   height: 55,
@@ -414,11 +1809,17 @@ class _AnimatedLoginPageState extends State<AnimatedLoginPage>
   }
 }
 
+// Update AnimatedHomePage constructor
 class AnimatedHomePage extends StatefulWidget {
   final String name;
   final DateTime birthDate;
+  final UserData? userData;
 
-  const AnimatedHomePage({required this.name, required this.birthDate});
+  const AnimatedHomePage({
+    required this.name,
+    required this.birthDate,
+    this.userData,
+  });
 
   @override
   State<AnimatedHomePage> createState() => _AnimatedHomePageState();
@@ -432,20 +1833,16 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
   late Animation<double> _fadeAnimation;
   double _opacity = 0.0;
 
-
   int _selectedTab = 0;
   final List<DailyHoroscope> _weeklyHoroscope = [];
   final List<Meditation> _meditations = [];
 
-
   List<int> _luckyNumbers = [];
   List<String> _luckyColors = [];
-
 
   String _currentMoonPhase = "";
   String _moonPhaseEmoji = "";
   String _moonPhaseDescription = "";
-
 
   final List<String> _dailyAffirmations = [
     "I am aligned with the universe's positive energy",
@@ -460,7 +1857,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
     "I radiate positive energy that attracts goodness"
   ];
   String _currentAffirmation = "";
-
 
   String _partnerZodiac = "";
   String _compatibilityResult = "";
@@ -496,7 +1892,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
   }
 
   void _initializeData() {
-
     _weeklyHoroscope.addAll([
       DailyHoroscope(day: 'Monday', prediction: 'Great day for new beginnings', luckyNumber: 7),
       DailyHoroscope(day: 'Tuesday', prediction: 'Focus on communication', luckyNumber: 3),
@@ -507,7 +1902,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       DailyHoroscope(day: 'Sunday', prediction: 'Perfect for relaxation', luckyNumber: 1),
     ]);
 
-
     _meditations.addAll([
       Meditation(title: 'New Moon Meditation', duration: '15 min', type: 'Guided'),
       Meditation(title: 'Full Moon Release', duration: '20 min', type: 'Guided'),
@@ -515,16 +1909,10 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       Meditation(title: 'Cosmic Energy Flow', duration: '25 min', type: 'Guided'),
     ]);
 
-
     _generateLuckyNumbersAndColors();
-
-
     _calculateMoonPhase();
-
-
     _generateDailyAffirmation();
   }
-
 
   void _generateDailyAffirmation() {
     final random = Random();
@@ -532,7 +1920,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       _currentAffirmation = _dailyAffirmations[random.nextInt(_dailyAffirmations.length)];
     });
   }
-
 
   void _checkQuickCompatibility(String userZodiac, String partnerZodiac) {
     Map<String, List<String>> compatibilityMap = {
@@ -558,7 +1945,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       setState(() => _compatibilityResult = "💫 Interesting dynamic! This pairing offers great potential for growth and learning.");
     }
   }
-
 
   Widget _buildAffirmationCard() {
     return Card(
@@ -613,7 +1999,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       ),
     );
   }
-
 
   Widget _buildQuickCompatibilityCard(String userZodiac) {
     return Card(
@@ -717,7 +2102,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
   void _generateLuckyNumbersAndColors() {
     final Random random = Random();
 
-
     _luckyNumbers = [];
     while (_luckyNumbers.length < 3) {
       int number = random.nextInt(100) + 1;
@@ -725,7 +2109,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         _luckyNumbers.add(number);
       }
     }
-
 
     final List<String> allColors = [
       'Deep Purple', 'Royal Blue', 'Emerald Green', 'Sunset Orange',
@@ -744,8 +2127,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
 
   void _calculateMoonPhase() {
     final now = DateTime.now();
-
-
 
     final referenceNewMoon = DateTime(2024, 1, 11);
     final daysSinceNewMoon = now.difference(referenceNewMoon).inDays;
@@ -791,7 +2172,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       _generateLuckyNumbersAndColors();
     });
 
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('✨ New lucky numbers & colors generated!'),
@@ -807,7 +2187,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
     _gradientController.dispose();
     super.dispose();
   }
-
 
   String getZodiacSign(DateTime date) {
     final int day = date.day;
@@ -828,18 +2207,10 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
     return "Unknown";
   }
 
-
   Map<String, dynamic> calculateNumerology(String name, DateTime birthDate) {
-
     int soulUrgeNumber = _calculateSoulUrgeNumber(name);
-
-
     int birthdayNumber = _calculateBirthdayNumber(birthDate);
-
-
     int lifePathNumber = _calculateLifePathNumber(birthDate);
-
-
     int destinyNumber = _calculateDestinyNumber(name);
 
     return {
@@ -855,14 +2226,9 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
   }
 
   int _calculateSoulUrgeNumber(String name) {
-
     String cleanName = name.replaceAll(' ', '').toUpperCase();
-
-
     String vowels = 'AEIOU';
-
     int sum = 0;
-
 
     for (int i = 0; i < cleanName.length; i++) {
       String char = cleanName[i];
@@ -876,7 +2242,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         }
       }
     }
-
 
     return _reduceToSingleDigit(sum);
   }
@@ -895,11 +2260,8 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
   }
 
   int _calculateDestinyNumber(String name) {
-
     String cleanName = name.replaceAll(' ', '').toUpperCase();
-
     int sum = 0;
-
 
     for (int i = 0; i < cleanName.length; i++) {
       String char = cleanName[i];
@@ -907,7 +2269,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       int value = ((position - 1) % 9) + 1;
       sum += value;
     }
-
 
     return _reduceToSingleDigit(sum);
   }
@@ -993,20 +2354,14 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
     }
   }
 
-
   Map<String, dynamic> calculateCompatibility(
       String westernSign1,
       Map<String, dynamic> numerology1,
       String westernSign2,
       Map<String, dynamic> numerology2
       ) {
-
     double westernScore = _calculateWesternCompatibility(westernSign1, westernSign2);
-
-
     double numerologyScore = _calculateNumerologyCompatibility(numerology1, numerology2);
-
-
     double overallScore = (westernScore * 0.7) + (numerologyScore * 0.3);
 
     String compatibilityLevel = _getCompatibilityLevel(overallScore);
@@ -1022,7 +2377,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
   }
 
   double _calculateWesternCompatibility(String sign1, String sign2) {
-
     Map<String, List<String>> compatibleSigns = {
       'Aries ♈': ['Leo ♌', 'Sagittarius ♐', 'Gemini ♊', 'Aquarius ♒'],
       'Taurus ♉': ['Virgo ♍', 'Capricorn ♑', 'Cancer ♋', 'Pisces ♓'],
@@ -1050,24 +2404,20 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
   double _calculateNumerologyCompatibility(Map<String, dynamic> num1, Map<String, dynamic> num2) {
     double score = 0.0;
 
-
     int lifePathDiff = (num1['life_path'] - num2['life_path']).abs();
     if (lifePathDiff == 0) score += 0.3;
     else if (lifePathDiff <= 2) score += 0.2;
     else score += 0.1;
-
 
     int destinyDiff = (num1['destiny'] - num2['destiny']).abs();
     if (destinyDiff == 0) score += 0.3;
     else if (destinyDiff <= 2) score += 0.2;
     else score += 0.1;
 
-
     int soulUrgeDiff = (num1['soul_urge'] - num2['soul_urge']).abs();
     if (soulUrgeDiff == 0) score += 0.2;
     else if (soulUrgeDiff <= 2) score += 0.15;
     else score += 0.05;
-
 
     int birthdayDiff = (num1['birthday'] - num2['birthday']).abs();
     if (birthdayDiff == 0) score += 0.2;
@@ -1109,7 +2459,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Mars',
         'color': 'Red',
         'traits': 'Courageous, Determined, Confident, Enthusiastic, Optimistic, Passionate',
-        'description': 'The pioneer and trailblazer of the horoscope wheel, Aries energy helps us initiate, fight for our beliefs and fearlessly put ourselves out there. Aries is the first sign of the zodiac, and that\'s pretty much how those born under this sign see themselves: first. Aries are the leaders of the pack, first in line to get things going. Whether or not everything gets done is another question altogether, for an Aries prefers to start rather than to finish.',
+        'description': 'The pioneer and trailblazer of the horoscope wheel, Aries energy helps us initiate, fight for our beliefs and fearlessly put ourselves out there. Aries is the first sign of the zodiac, and that\'s pretty much how those born under this sign see themselves: first. Aries are the leaders of the pack, first in line to get things going.',
         'compatibility': ['Leo', 'Sagittarius', 'Gemini'],
         'lucky_numbers': [1, 9, 7],
         'best_traits': ['Courageous', 'Determined', 'Confident', 'Enthusiastic', 'Optimistic'],
@@ -1130,7 +2480,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Venus',
         'color': 'Green, Pink',
         'traits': 'Reliable, Patient, Practical, Devoted, Responsible, Stable',
-        'description': 'The persistent provider of the horoscope family, Taurus energy helps us seek security, enjoy earthly pleasures and get the job done. Taurus is an earth sign represented by the bull. Like their celestial spirit animal, Taureans enjoy relaxing in serene, bucolic environments surrounded by soft sounds, soothing aromas, and succulent flavors. Taurus is ruled by Venus, the planet that governs love, beauty, and money.',
+        'description': 'The persistent provider of the horoscope family, Taurus energy helps us seek security, enjoy earthly pleasures and get the job done. Taurus is an earth sign represented by the bull. Like their celestial spirit animal, Taureans enjoy relaxing in serene, bucolic environments.',
         'compatibility': ['Virgo', 'Capricorn', 'Cancer'],
         'lucky_numbers': [2, 6, 9, 12],
         'best_traits': ['Reliable', 'Patient', 'Practical', 'Devoted', 'Responsible'],
@@ -1151,7 +2501,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Mercury',
         'color': 'Yellow, Light-Green',
         'traits': 'Versatile, Expressive, Curious, Kind, Intelligent, Quick-witted',
-        'description': 'The versatile communicator of the horoscope wheel, Gemini energy helps us communicate, connect, and synthesize ideas and information. Gemini is an air sign represented by the twins. When you listen to a Gemini, you\'re hearing two perspectives for the price of one. Geminis are known for their dual natures, and they can see both sides of any issue.',
+        'description': 'The versatile communicator of the horoscope wheel, Gemini energy helps us communicate, connect, and synthesize ideas and information. Gemini is an air sign represented by the twins.',
         'compatibility': ['Libra', 'Aquarius', 'Aries'],
         'lucky_numbers': [5, 7, 14, 23],
         'best_traits': ['Versatile', 'Expressive', 'Curious', 'Kind', 'Intelligent'],
@@ -1172,7 +2522,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Moon',
         'color': 'White, Silver',
         'traits': 'Intuitive, Emotional, Intelligent, Passionate, Protective, Sympathetic',
-        'description': 'The natural nurturer of the horoscope wheel, Cancer energy helps us connect with our feelings, plant deep roots, and create safe, supportive environments. Cancer is a water sign represented by the crab. Cancers are highly intuitive and their psychic abilities manifest in tangible spaces.',
+        'description': 'The natural nurturer of the horoscope wheel, Cancer energy helps us connect with our feelings, plant deep roots, and create safe, supportive environments. Cancer is a water sign represented by the crab.',
         'compatibility': ['Scorpio', 'Pisces', 'Taurus'],
         'lucky_numbers': [2, 3, 15, 20],
         'best_traits': ['Intuitive', 'Emotional', 'Intelligent', 'Passionate', 'Protective'],
@@ -1193,7 +2543,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Sun',
         'color': 'Gold, Yellow, Orange',
         'traits': 'Creative, Passionate, Generous, Warm-hearted, Cheerful, Humorous',
-        'description': 'The dramatic performer of the horoscope wheel, Leo energy helps us shine, express ourselves authentically, and celebrate life. Leo is a fire sign represented by the lion. Leos are delighted to embrace their royal status: Vivacious, theatrical, and passionate.',
+        'description': 'The dramatic performer of the horoscope wheel, Leo energy helps us shine, express ourselves authentically, and celebrate life. Leo is a fire sign represented by the lion.',
         'compatibility': ['Aries', 'Sagittarius', 'Gemini'],
         'lucky_numbers': [1, 3, 10, 19],
         'best_traits': ['Creative', 'Passionate', 'Generous', 'Warm-hearted', 'Cheerful'],
@@ -1214,7 +2564,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Mercury',
         'color': 'Green, Brown',
         'traits': 'Loyal, Analytical, Kind, Hardworking, Practical, Helpful',
-        'description': 'The systematic analyst of the horoscope wheel, Virgo energy helps us synthesize, analyze, and organize. Virgo is an earth sign represented by the goddess of wheat and agriculture. Virgos are always paying attention to the smallest details and their deep sense of humanity makes them one of the most careful signs of the zodiac.',
+        'description': 'The systematic analyst of the horoscope wheel, Virgo energy helps us synthesize, analyze, and organize. Virgo is an earth sign represented by the goddess of wheat and agriculture.',
         'compatibility': ['Taurus', 'Capricorn', 'Cancer'],
         'lucky_numbers': [5, 14, 15, 23, 32],
         'best_traits': ['Loyal', 'Analytical', 'Kind', 'Hardworking', 'Practical'],
@@ -1235,7 +2585,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Venus',
         'color': 'Pink, Green',
         'traits': 'Cooperative, Diplomatic, Gracious, Fair-minded, Social, Idealistic',
-        'description': 'The harmonious平衡 of the horoscope wheel, Libra energy helps us collaborate, find compromise, and create beauty. Libra is an air sign represented by the scales. Libras are concerned with balance, harmony, and justice.',
+        'description': 'The harmonious平衡 of the horoscope wheel, Libra energy helps us collaborate, find compromise, and create beauty. Libra is an air sign represented by the scales.',
         'compatibility': ['Gemini', 'Aquarius', 'Leo'],
         'lucky_numbers': [4, 6, 13, 15, 24],
         'best_traits': ['Cooperative', 'Diplomatic', 'Gracious', 'Fair-minded', 'Social'],
@@ -1256,7 +2606,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Pluto, Mars',
         'color': 'Scarlet, Red, Rust',
         'traits': 'Brave, Passionate, Stubborn, Emotional, Intense, Determined',
-        'description': 'The intense transformer of the horoscope wheel, Scorpio energy helps us dive deep, merge our energy, and create powerful change. Scorpio is a water sign represented by the scorpion. Scorpios are passionate, assertive, and determined.',
+        'description': 'The intense transformer of the horoscope wheel, Scorpio energy helps us dive deep, merge our energy, and create powerful change. Scorpio is a water sign represented by the scorpion.',
         'compatibility': ['Cancer', 'Pisces', 'Virgo'],
         'lucky_numbers': [8, 11, 18, 22],
         'best_traits': ['Brave', 'Passionate', 'Stubborn', 'Emotional', 'Intense'],
@@ -1277,7 +2627,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Jupiter',
         'color': 'Blue',
         'traits': 'Generous, Idealistic, Great sense of humor, Adventurous, Open-minded',
-        'description': 'The adventurous explorer of the horoscope wheel, Sagittarius energy inspires us to dream big, explore new horizons, and embrace freedom. Sagittarius is a fire sign represented by the archer. Sagittarians are always searching for meaning and truth.',
+        'description': 'The adventurous explorer of the horoscope wheel, Sagittarius energy inspires us to dream big, explore new horizons, and embrace freedom. Sagittarius is a fire sign represented by the archer.',
         'compatibility': ['Aries', 'Leo', 'Aquarius'],
         'lucky_numbers': [3, 7, 9, 12, 21],
         'best_traits': ['Generous', 'Idealistic', 'Great sense of humor', 'Adventurous', 'Open-minded'],
@@ -1298,7 +2648,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Saturn',
         'color': 'Brown, Black',
         'traits': 'Responsible, Disciplined, Self-control, Good managers, Ambitious',
-        'description': 'The determined achiever of the horoscope wheel, Capricorn energy helps us set goals, work hard, and build lasting structures. Capricorn is an earth sign represented by the sea-goat. Capricorns are skilled at navigating both the material and emotional realms.',
+        'description': 'The determined achiever of the horoscope wheel, Capricorn energy helps us set goals, work hard, and build lasting structures. Capricorn is an earth sign represented by the sea-goat.',
         'compatibility': ['Taurus', 'Virgo', 'Scorpio'],
         'lucky_numbers': [4, 8, 13, 22],
         'best_traits': ['Responsible', 'Disciplined', 'Self-control', 'Good managers', 'Ambitious'],
@@ -1319,7 +2669,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Uranus, Saturn',
         'color': 'Light-Blue, Silver',
         'traits': 'Progressive, Original, Independent, Humanitarian, Inventive',
-        'description': 'The innovative humanitarian of the horoscope wheel, Aquarius energy helps us innovate, collaborate, and advance society. Aquarius is an air sign represented by the water bearer. Aquarians are forward-thinking and intellectual.',
+        'description': 'The innovative humanitarian of the horoscope wheel, Aquarius energy helps us innovate, collaborate, and advance society. Aquarius is an air sign represented by the water bearer.',
         'compatibility': ['Gemini', 'Libra', 'Sagittarius'],
         'lucky_numbers': [4, 7, 11, 22, 29],
         'best_traits': ['Progressive', 'Original', 'Independent', 'Humanitarian', 'Inventive'],
@@ -1340,7 +2690,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
         'planet': 'Neptune, Jupiter',
         'color': 'Sea Green, Purple',
         'traits': 'Compassionate, Artistic, Intuitive, Gentle, Wise, Musical',
-        'description': 'The mystical dreamer of the horoscope wheel, Pisces energy helps us connect to the divine, tap into universal wisdom, and access spirituality. Pisces is a water sign represented by two fish swimming in opposite directions. Pisceans are known for their sensitivity and vivid imaginations.',
+        'description': 'The mystical dreamer of the horoscope wheel, Pisces energy helps us connect to the divine, tap into universal wisdom, and access spirituality. Pisces is a water sign represented by two fish swimming in opposite directions.',
         'compatibility': ['Cancer', 'Scorpio', 'Taurus'],
         'lucky_numbers': [3, 9, 12, 15, 18, 24],
         'best_traits': ['Compassionate', 'Artistic', 'Intuitive', 'Gentle', 'Wise'],
@@ -1428,10 +2778,8 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-
           _buildAffirmationCard(),
           SizedBox(height: 16),
-
 
           Card(
             elevation: 8,
@@ -1471,15 +2819,12 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
 
           const SizedBox(height: 16),
 
-
           _buildQuickCompatibilityCard(zodiac),
           SizedBox(height: 16),
-
 
           _buildDailyHoroscope(),
 
           const SizedBox(height: 16),
-
 
           ..._buildEnhancedZodiacInfoCards(zodiacInfo),
         ],
@@ -1540,7 +2885,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-
           Card(
             elevation: 8,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -1571,7 +2915,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
           ),
 
           const SizedBox(height: 16),
-
 
           ..._buildNumerologyDetailCards(numerology),
         ],
@@ -1701,7 +3044,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
   }
 
   Widget _buildCompatibilityTab(String zodiac, Map<String, dynamic> zodiacInfo) {
-
     String partnerWesternSign = "Leo ♌";
     Map<String, dynamic> partnerNumerology = calculateNumerology("Partner Name", DateTime(1990, 8, 15));
 
@@ -1716,7 +3058,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-
           Card(
             elevation: 8,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -1755,7 +3096,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
 
           const SizedBox(height: 16),
 
-
           Card(
             elevation: 5,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -1787,7 +3127,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
           ),
 
           const SizedBox(height: 16),
-
 
           Card(
             elevation: 5,
@@ -2001,14 +3340,11 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-
           _buildMoonPhaseCard(),
           const SizedBox(height: 16),
 
-
           _buildLuckyNumbersCard(),
           const SizedBox(height: 16),
-
 
           _buildCompatibilityCard(zodiacInfo),
         ],
@@ -2021,7 +3357,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-
           Card(
             elevation: 8,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -2058,7 +3393,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
           ),
 
           SizedBox(height: 16),
-
 
           Card(
             elevation: 5,
@@ -2127,7 +3461,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
           ),
 
           SizedBox(height: 16),
-
 
           Card(
             elevation: 5,
@@ -2323,7 +3656,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
             ),
             const SizedBox(height: 16),
 
-
             const Text(
               "Your Lucky Numbers Today:",
               style: TextStyle(
@@ -2359,7 +3691,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
             ),
 
             const SizedBox(height: 20),
-
 
             const Text(
               "Your Lucky Colors Today:",
@@ -2430,7 +3761,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
   }
 
   Color _getTextColorForBackground(Color backgroundColor) {
-
     final brightness = backgroundColor.computeLuminance();
     return brightness > 0.5 ? Colors.black : Colors.white;
   }
@@ -2495,7 +3825,6 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
 
   List<Widget> _buildEnhancedZodiacInfoCards(Map<String, dynamic> zodiacInfo) {
     return [
-
       Card(
         elevation: 5,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -2539,13 +3868,11 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       ),
       const SizedBox(height: 15),
 
-
       _buildTraitsCard("Best Traits", zodiacInfo['best_traits'], Colors.green, Icons.thumb_up),
       const SizedBox(height: 15),
 
       _buildTraitsCard("Areas to Improve", zodiacInfo['weaknesses'], Colors.orange, Icons.warning),
       const SizedBox(height: 15),
-
 
       Card(
         elevation: 5,
@@ -2612,10 +3939,8 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
       ),
       const SizedBox(height: 15),
 
-
       _buildFamousPeopleCard(zodiacInfo['famous_people']),
       const SizedBox(height: 15),
-
 
       Card(
         elevation: 5,
@@ -2883,7 +4208,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
     return Scaffold(
       body: Stack(
         children: [
-
+          // Animated Background
           AnimatedBuilder(
             animation: _gradientController,
             builder: (context, child) {
@@ -2905,14 +4230,13 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
             },
           ),
 
-
+          // Stars
           ..._buildStars(context),
-
 
           SafeArea(
             child: Column(
               children: [
-
+                // Header with logout option if logged in
                 Container(
                   padding: const EdgeInsets.all(16),
                   child: Row(
@@ -2931,6 +4255,20 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
                         ),
                       ),
                       const Spacer(),
+                      if (widget.userData != null)
+                        IconButton(
+                          icon: const Icon(Icons.logout, color: Colors.white),
+                          onPressed: () async {
+                            await AuthService().logout();
+                            Navigator.pushReplacement(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => WelcomeScreen(),
+                              ),
+                            );
+                          },
+                          tooltip: 'Logout',
+                        ),
                       IconButton(
                         icon: const Icon(Icons.share, color: Colors.white),
                         onPressed: () {},
@@ -2957,7 +4295,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
                           ),
                           child: Column(
                             children: [
-
+                              // Welcome Section
                               Padding(
                                 padding: const EdgeInsets.all(24),
                                 child: Column(
@@ -3012,7 +4350,7 @@ class _AnimatedHomePageState extends State<AnimatedHomePage>
                                       _buildTabButton(2, 'Compatibility', Icons.favorite),
                                       _buildTabButton(3, 'Meditation', Icons.self_improvement),
                                       _buildTabButton(4, 'Cosmic', Icons.auto_awesome),
-                                      _buildTabButton(5, 'Insights', Icons.lightbulb), // NEW TAB
+                                      _buildTabButton(5, 'Insights', Icons.lightbulb),
                                     ],
                                   ),
                                 ),
@@ -3064,7 +4402,6 @@ class Meditation {
   });
 }
 
-// NEW: Daily Insights Page
 class DailyInsightsPage extends StatefulWidget {
   final String name;
   final String zodiacSign;
@@ -3086,7 +4423,6 @@ class _DailyInsightsPageState extends State<DailyInsightsPage>
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
   double _opacity = 0.0;
-
 
   final Map<String, String> _dailyMood = {
     'mood': 'Positive',
@@ -3257,13 +4593,12 @@ class _DailyInsightsPageState extends State<DailyInsightsPage>
                   ),
                 ),
 
-
+                // Content
                 Expanded(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       children: [
-
                         const Text(
                           "Today's Energy",
                           style: TextStyle(
@@ -3288,7 +4623,6 @@ class _DailyInsightsPageState extends State<DailyInsightsPage>
                         ),
 
                         const SizedBox(height: 24),
-
 
                         Card(
                           elevation: 4,
@@ -3333,7 +4667,6 @@ class _DailyInsightsPageState extends State<DailyInsightsPage>
 
                         const SizedBox(height: 24),
 
-
                         const Text(
                           "Quick Tips for Today",
                           style: TextStyle(
@@ -3347,10 +4680,8 @@ class _DailyInsightsPageState extends State<DailyInsightsPage>
 
                         const SizedBox(height: 24),
 
-
                         ElevatedButton.icon(
                           onPressed: () {
-
                             setState(() {});
                           },
                           icon: const Icon(Icons.refresh),
